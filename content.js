@@ -355,7 +355,11 @@ function chunkText(text, maxTokens) {
         white-space: normal;
       `;
   
-      content.innerHTML = parseMarkdown(message);
+      // Create a DocumentFragment to batch DOM operations
+      const fragment = document.createRange().createContextualFragment(parseMarkdown(message));
+      
+      // Append the parsed content using the DocumentFragment
+      content.appendChild(fragment);
   
       // Calculate relative header sizes based on base font size
       const headerSizes = {
