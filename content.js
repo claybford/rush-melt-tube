@@ -327,6 +327,12 @@ function chunkText(text, maxTokens) {
   return chunks;
 }
 
+function htmlToDOMElement(html) {
+  const template = document.createElement('template');
+  template.innerHTML = html;  // Template element is designed for this use case and is safe
+  return template.content.cloneNode(true);
+}
+
 async function createPopup(message) {
   // Remove existing popup if present
   const existingPopup = document.getElementById("transcript-summary-popup");
@@ -374,13 +380,9 @@ async function createPopup(message) {
         white-space: normal;
       `;
 
-    // Create a DocumentFragment to batch DOM operations
-    const fragment = document
-      .createRange()
-      .createContextualFragment(parseMarkdown(message));
-
-    // Append the parsed content using the DocumentFragment
-    content.appendChild(fragment);
+    // Convert the parsed markdown HTML to DOM elements
+    const parsedContent = htmlToDOMElement(parseMarkdown(message));
+    content.appendChild(parsedContent);
 
     // Calculate relative header sizes based on base font size
     const headerSizes = {
