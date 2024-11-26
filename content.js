@@ -327,6 +327,53 @@ function chunkText(text, maxTokens) {
   return chunks;
 }
 
+function convertHTMLStringToDOM(htmlString) {
+  // Parse the HTML string without using innerHTML
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(htmlString, "text/html");
+  const result = document.createElement("div");
+
+  // Helper to create a clean copy of a node using only DOM methods
+  function createCleanNode(node) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return document.createTextNode(node.textContent);
+    }
+
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      // Create a new element of the same type
+      const newElement = document.createElement(node.tagName);
+
+      // Copy attributes
+      Array.from(node.attributes).forEach((attr) => {
+        // Only copy safe attributes (add more as needed)
+        if (["class", "id", "style"].includes(attr.name)) {
+          newElement.setAttribute(attr.name, attr.value);
+        }
+      });
+
+      // Recursively handle child nodes
+      Array.from(node.childNodes).forEach((child) => {
+        newElement.appendChild(createCleanNode(child));
+      });
+
+      return newElement;
+    }
+
+    // Ignore other node types
+    return null;
+  }
+
+  // Convert all child nodes from the body
+  Array.from(doc.body.childNodes).forEach((node) => {
+    const cleanNode = createCleanNode(node);
+    if (cleanNode) {
+      result.appendChild(cleanNode);
+    }
+  });
+
+  return result;
+}
+
 async function createPopup(message) {
   // Remove existing popup if present
   const existingPopup = document.getElementById("transcript-summary-popup");
@@ -374,13 +421,10 @@ async function createPopup(message) {
         white-space: normal;
       `;
 
-    // Create a DocumentFragment to batch DOM operations
-    const fragment = document
-      .createRange()
-      .createContextualFragment(parseMarkdown(message));
-
-    // Append the parsed content using the DocumentFragment
-    content.appendChild(fragment);
+    // Convert markdown to HTML string, then to DOM
+    const htmlString = parseMarkdown(message);
+    const domContent = convertHTMLStringToDOM(htmlString);
+    content.appendChild(domContent);
 
     // Calculate relative header sizes based on base font size
     const headerSizes = {
