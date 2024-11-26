@@ -1,0 +1,1 @@
+Rush Melt Tube is a Firefox extension that summarizes YouTube videos by pulling the video transcript and processing it using the AI tool of your choice (permissions set in the manifest for local, OpenAI, and Anthropic).
