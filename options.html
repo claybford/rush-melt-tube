@@ -1,116 +1,116 @@
 <!DOCTYPE html>
 <html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    body {
-      padding: 20px;
-      font-family: Arial, sans-serif;
-    }
-    .container {
-      max-width: 800px;
-      margin: 0 auto;
-    }
-    .form-group {
-      margin-bottom: 15px;
-    }
-    label {
-      display: block;
-      margin-bottom: 5px;
-      font-weight: bold;
-    }
-    input[type="text"], 
-    input[type="url"], 
-    input[type="number"] {
-      width: 100%;
-      padding: 8px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      box-sizing: border-box;
-    }
-    .color-input-group {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-    }
-    .color-input-group input[type="text"] {
-      width: 100px;
-    }
-    .font-input-group {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-    }
-    .font-input-group input[type="text"] {
-      flex-grow: 1;
-    }
-    .font-preview {
-      padding: 5px 10px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      min-width: 150px;
-    }
-    .color-preview {
-      width: 30px;
-      height: 30px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-    }
-    button {
-      background-color: #4CAF50;
-      color: white;
-      padding: 10px 15px;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-    }
-    button:hover {
-      background-color: #45a049;
-    }
-    .status {
-      margin-top: 15px;
-      padding: 10px;
-      border-radius: 4px;
-      display: none;
-    }
-    .success {
-      background-color: #dff0d8;
-      color: #3c763d;
-      border: 1px solid #d6e9c6;
-    }
-    .error {
-      background-color: #f2dede;
-      color: #a94442;
-      border: 1px solid #ebccd1;
-    }
-    .settings-section {
-      border: 1px solid #ddd;
-      padding: 15px;
-      margin-bottom: 20px;
-      border-radius: 4px;
-    }
-    .settings-section h2 {
-      margin-top: 0;
-      margin-bottom: 15px;
-      color: #333;
-    }
-    .preview-box {
-      margin-top: 10px;
-      padding: 15px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-    }
-    small {
-      color: #666;
-      display: block;
-      margin-top: 5px;
-    }
-  </style>
-</head>
-<body>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        padding: 20px;
+        font-family: Arial, sans-serif;
+      }
+      .container {
+        max-width: 800px;
+        margin: 0 auto;
+      }
+      .form-group {
+        margin-bottom: 15px;
+      }
+      label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+      }
+      input[type="text"],
+      input[type="url"],
+      input[type="number"] {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-sizing: border-box;
+      }
+      .color-input-group {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .color-input-group input[type="text"] {
+        width: 100px;
+      }
+      .font-input-group {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .font-input-group input[type="text"] {
+        flex-grow: 1;
+      }
+      .font-preview {
+        padding: 5px 10px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 150px;
+      }
+      .color-preview {
+        width: 30px;
+        height: 30px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+      button {
+        background-color: #4caf50;
+        color: white;
+        padding: 10px 15px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      button:hover {
+        background-color: #45a049;
+      }
+      .status {
+        margin-top: 15px;
+        padding: 10px;
+        border-radius: 4px;
+        display: none;
+      }
+      .success {
+        background-color: #dff0d8;
+        color: #3c763d;
+        border: 1px solid #d6e9c6;
+      }
+      .error {
+        background-color: #f2dede;
+        color: #a94442;
+        border: 1px solid #ebccd1;
+      }
+      .settings-section {
+        border: 1px solid #ddd;
+        padding: 15px;
+        margin-bottom: 20px;
+        border-radius: 4px;
+      }
+      .settings-section h2 {
+        margin-top: 0;
+        margin-bottom: 15px;
+        color: #333;
+      }
+      .preview-box {
+        margin-top: 10px;
+        padding: 15px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+      }
+      small {
+        color: #666;
+        display: block;
+        margin-top: 5px;
+      }
+    </style>
+  </head>
+  <body>
     <div class="container">
       <h1>Rush Melt Tube Settings</h1>
       <form id="settings-form">
@@ -118,83 +118,137 @@
           <h2>API Settings</h2>
           <div class="form-group">
             <label for="apiUrl">API URL</label>
-            <input type="url" id="apiUrl" placeholder="https://api.openai.com/v1/chat/completions" required>
+            <input
+              type="url"
+              id="apiUrl"
+              placeholder="https://api.openai.com/v1/chat/completions"
+              required
+            />
           </div>
           <div class="form-group">
             <label for="apiKey">API Key</label>
-            <input type="text" id="apiKey" placeholder="Enter your API key here" required>
+            <input
+              type="text"
+              id="apiKey"
+              placeholder="Enter your API key here"
+              required
+            />
           </div>
           <div class="form-group">
             <label for="model">Model Name</label>
-            <input type="text" id="model" placeholder="gpt-4o" required>
+            <input type="text" id="model" placeholder="gpt-4o" required />
           </div>
           <div class="form-group">
             <label for="chunkSize">Chunk Size (tokens)</label>
-            <input type="number" id="chunkSize" placeholder="1000" min="100" max="10000" step="100" required>
+            <input
+              type="number"
+              id="chunkSize"
+              placeholder="1000"
+              min="100"
+              max="10000"
+              step="100"
+              required
+            />
           </div>
         </div>
-  
+
         <div class="settings-section">
           <h2>Popup Appearance</h2>
           <div class="form-group">
             <label for="font">Font Family</label>
             <div class="font-input-group">
-              <input type="text" 
-                     id="font" 
-                     list="systemFonts" 
-                     placeholder="Arial"
-                     required>
+              <input
+                type="text"
+                id="font"
+                list="systemFonts"
+                placeholder="Arial"
+                required
+              />
               <datalist id="systemFonts">
                 <!-- Will be populated with system fonts via JavaScript -->
               </datalist>
               <span class="font-preview" id="fontPreview">Sample Text</span>
             </div>
-            <small>Type a custom font name or select from available system fonts</small>
+            <small
+              >Type a custom font name or select from available system
+              fonts</small
+            >
           </div>
           <div class="form-group">
             <label for="fontSize">Font Size (px)</label>
-            <input type="number" id="fontSize" placeholder="14" min="8" max="24" step="1" required>
+            <input
+              type="number"
+              id="fontSize"
+              placeholder="14"
+              min="8"
+              max="24"
+              step="1"
+              required
+            />
           </div>
           <div class="form-group">
             <label for="textColor">Text Color (hex)</label>
             <div class="color-input-group">
-              <input type="text" id="textColor" pattern="^#[0-9A-Fa-f]{6}$" placeholder="#e6db74" required>
+              <input
+                type="text"
+                id="textColor"
+                pattern="^#[0-9A-Fa-f]{6}$"
+                placeholder="#e6db74"
+                required
+              />
               <span class="color-preview" id="textColorPreview"></span>
             </div>
           </div>
           <div class="form-group">
             <label for="backgroundColor">Background Color (hex)</label>
             <div class="color-input-group">
-              <input type="text" id="backgroundColor" pattern="^#[0-9A-Fa-f]{6}$" placeholder="#263238" required>
+              <input
+                type="text"
+                id="backgroundColor"
+                pattern="^#[0-9A-Fa-f]{6}$"
+                placeholder="#263238"
+                required
+              />
               <span class="color-preview" id="backgroundColorPreview"></span>
             </div>
           </div>
           <div class="form-group">
             <label for="buttonColor">Button Color (hex)</label>
             <div class="color-input-group">
-              <input type="text" id="buttonColor" pattern="^#[0-9A-Fa-f]{6}$" placeholder="#9dff00" required>
+              <input
+                type="text"
+                id="buttonColor"
+                pattern="^#[0-9A-Fa-f]{6}$"
+                placeholder="#9dff00"
+                required
+              />
               <span class="color-preview" id="buttonColorPreview"></span>
             </div>
           </div>
           <div class="form-group">
             <label for="buttonTextColor">Button Text Color (hex)</label>
             <div class="color-input-group">
-              <input type="text" id="buttonTextColor" pattern="^#[0-9A-Fa-f]{6}$" placeholder="#263238" required>
+              <input
+                type="text"
+                id="buttonTextColor"
+                pattern="^#[0-9A-Fa-f]{6}$"
+                placeholder="#263238"
+                required
+              />
               <span class="color-preview" id="buttonTextColorPreview"></span>
             </div>
           </div>
-  
+
           <div class="preview-box" id="preview">
             <p>Preview of your popup styling</p>
             <button id="previewButton">Close</button>
           </div>
         </div>
-  
+
         <button type="submit">Save Settings</button>
       </form>
       <div id="status" class="status"></div>
     </div>
     <script src="options.js"></script>
   </body>
-  
 </html>
