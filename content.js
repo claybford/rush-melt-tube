@@ -1,3 +1,6 @@
+let processCounter = 0;
+const activeProcesses = new Map(); // Maps process IDs to their cancellation status
+
 async function getSettings() {
   const defaultSettings = {
     apiUrl: "https://api.openai.com/v1/chat/completions",
@@ -21,88 +24,102 @@ async function getSettings() {
   return settings;
 }
 
-async function getVideoTranscript() {
-  const getVideoId = () => {
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get("v");
-  };
+async function getVideoTranscript(processId) {
+  try {
+    const getVideoId = () => {
+      if (activeProcesses.get(processId))
+        throw new Error("Operation cancelled");
+      const urlParams = new URLSearchParams(window.location.search);
+      return urlParams.get("v");
+    };
 
-  const fetchCaptionTracks = async (videoId) => {
-    const response = await fetch(`https://www.youtube.com/watch?v=${videoId}`);
-    if (!response.ok) {
-      throw new Error("Failed to fetch video page.");
-    }
-    const pageSource = await response.text();
-    const captionsRegex = /"captions":({.*?})\s*,\s*"videoDetails"/s;
-    const captionsMatch = pageSource.match(captionsRegex);
-    if (!captionsMatch || captionsMatch.length < 2) {
-      throw new Error("No captions metadata found.");
-    }
-    const rawCaptionsJson = captionsMatch[1];
-    let captionsData;
-    try {
-      captionsData = JSON.parse(rawCaptionsJson);
-    } catch (parseError) {
-      throw new Error("Failed to parse captions metadata.");
-    }
-    return captionsData.playerCaptionsTracklistRenderer.captionTracks || [];
-  };
+    const fetchCaptionTracks = async (videoId) => {
+      if (activeProcesses.get(processId))
+        throw new Error("Operation cancelled");
+      const response = await fetch(
+        `https://www.youtube.com/watch?v=${videoId}`
+      );
+      if (!response.ok) {
+        throw new Error("Failed to fetch video page.");
+      }
+      const pageSource = await response.text();
+      const captionsRegex = /"captions":({.*?})\s*,\s*"videoDetails"/s;
+      const captionsMatch = pageSource.match(captionsRegex);
+      if (!captionsMatch || captionsMatch.length < 2) {
+        throw new Error("No captions metadata found.");
+      }
+      const rawCaptionsJson = captionsMatch[1];
+      let captionsData;
+      try {
+        captionsData = JSON.parse(rawCaptionsJson);
+      } catch (parseError) {
+        throw new Error("Failed to parse captions metadata.");
+      }
+      return captionsData.playerCaptionsTracklistRenderer.captionTracks || [];
+    };
 
-  const fetchTranscriptXML = async (baseUrl) => {
-    const response = await fetch(baseUrl);
-    if (!response.ok) {
-      throw new Error("Failed to fetch the transcript.");
-    }
-    const transcriptXml = await response.text();
-    if (!transcriptXml.trim()) {
-      throw new Error("No transcript available.");
-    }
-    return transcriptXml;
-  };
+    const fetchTranscriptXML = async (baseUrl) => {
+      if (activeProcesses.get(processId))
+        throw new Error("Operation cancelled");
+      const response = await fetch(baseUrl);
+      if (!response.ok) {
+        throw new Error("Failed to fetch the transcript.");
+      }
+      const transcriptXml = await response.text();
+      if (!transcriptXml.trim()) {
+        throw new Error("No transcript available.");
+      }
+      return transcriptXml;
+    };
 
-  const parseTranscriptXML = (xmlString) => {
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlString, "text/xml");
-    if (xmlDoc.querySelector("parsererror")) {
-      throw new Error("Error parsing transcript XML.");
+    const parseTranscriptXML = (xmlString) => {
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(xmlString, "text/xml");
+      if (xmlDoc.querySelector("parsererror")) {
+        throw new Error("Error parsing transcript XML.");
+      }
+      const texts = xmlDoc.getElementsByTagName("text");
+      let transcript = [];
+      for (let text of texts) {
+        transcript.push(text.textContent.trim());
+      }
+      return transcript.join(" ");
+    };
+
+    const videoId = getVideoId();
+    if (!videoId) {
+      throw new Error("No video ID found in the URL.");
     }
-    const texts = xmlDoc.getElementsByTagName("text");
-    let transcript = [];
-    for (let text of texts) {
-      transcript.push(text.textContent.trim());
+
+    const captionTracks = await fetchCaptionTracks(videoId);
+    if (captionTracks.length === 0) {
+      throw new Error("No caption tracks available.");
     }
-    return transcript.join(" ");
-  };
 
-  const videoId = getVideoId();
-  if (!videoId) {
-    throw new Error("No video ID found in the URL.");
-  }
-
-  const captionTracks = await fetchCaptionTracks(videoId);
-  if (captionTracks.length === 0) {
-    throw new Error("No caption tracks available.");
-  }
-
-  let selectedTrack = captionTracks.find(
-    (track) => track.languageCode === "en" && !track.kind
-  );
-  if (!selectedTrack) {
-    selectedTrack = captionTracks.find(
-      (track) => track.languageCode === "en" && track.kind === "asr"
+    let selectedTrack = captionTracks.find(
+      (track) => track.languageCode === "en" && !track.kind
     );
-  }
-  if (!selectedTrack) {
-    throw new Error(
-      "No suitable caption track found (manual or auto-generated)."
-    );
-  }
+    if (!selectedTrack) {
+      selectedTrack = captionTracks.find(
+        (track) => track.languageCode === "en" && track.kind === "asr"
+      );
+    }
+    if (!selectedTrack) {
+      throw new Error(
+        "No suitable caption track found (manual or auto-generated)."
+      );
+    }
 
-  const transcriptXml = await fetchTranscriptXML(selectedTrack.baseUrl);
-  return parseTranscriptXML(transcriptXml);
+    const transcriptXml = await fetchTranscriptXML(selectedTrack.baseUrl);
+    if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
+    return parseTranscriptXML(transcriptXml);
+  } finally {
+  }
 }
 
-async function sendToOpenAI(text) {
+async function sendToOpenAI(text, processId) {
+  if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
+
   try {
     const settings = await getSettings();
 
@@ -133,6 +150,8 @@ async function sendToOpenAI(text) {
         : `Please summarize this independent section (${chunkNumber}/${chunks.length}) of a video transcript. This may be from any point in the video. Focus on main points and keep the style structured in bullets, lists, etc as much as is logical, labeling any key sections you identify. Ignore sponsorships, include important details and steps of processes. Here is the section to summarize:\n\n${chunk}`;
 
       return async () => {
+        if (activeProcesses.get(processId))
+          throw new Error("Operation cancelled");
         try {
           const response = await fetch(settings.apiUrl, {
             method: "POST",
@@ -192,13 +211,14 @@ async function sendToOpenAI(text) {
         }
       };
     });
-
+    if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
     // Process chunks in parallel with concurrency limit
     const concurrencyLimit = 10; // Adjust based on API rate limits
     const summaryResults = await runWithConcurrencyLimit(
       chunkTasks,
       concurrencyLimit
     );
+    if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
 
     // Sort results by original index and extract summaries
     const orderedSummaries = summaryResults
@@ -210,6 +230,7 @@ async function sendToOpenAI(text) {
       type: "GETTING_SUMMARY",
       detail: "Getting complete summary...",
     });
+    if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
 
     // Combine summaries with a second API call for coherence
     const combinedSummary = await combineParallelSummaries(
@@ -217,16 +238,25 @@ async function sendToOpenAI(text) {
       settings
     );
 
-    await browser.runtime.sendMessage({
-      type: "SUMMARY_COMPLETE",
-      summary: combinedSummary,
-    });
+    // Only send the summary if this process wasn't cancelled
+    if (!activeProcesses.get(processId)) {
+      await browser.runtime.sendMessage({
+        type: "SUMMARY_COMPLETE",
+        summary: combinedSummary,
+      });
+    }
   } catch (error) {
-    console.error("OpenAI API error:", error);
-    await browser.runtime.sendMessage({
-      type: "SUMMARY_ERROR",
-      error: error.message,
-    });
+    if (error.message === "Operation cancelled") {
+      console.log("Processing cancelled by user");
+      return;
+    }
+    console.error("AI API error:", error);
+    if (!activeProcesses.get(processId)) {
+      await browser.runtime.sendMessage({
+        type: "SUMMARY_ERROR",
+        error: error.message,
+      });
+    }
   }
 }
 
@@ -292,7 +322,7 @@ async function combineParallelSummaries(summaries, settings) {
 // Splitting text into chunks based on token estimation
 function chunkText(text, maxTokens) {
   if (!maxTokens) {
-    maxTokens = 4000; // Default if not provided
+    maxTokens = 1000; // Default if not provided
   }
   // Define an approximate token estimation function
   const estimateTokens = (str) => Math.ceil(str.length / 4); // Rough estimate: 1 token ≈ 4 characters
@@ -373,13 +403,18 @@ function convertHTMLStringToDOM(htmlString) {
 
   return result;
 }
-
+function cleanupAllPopups() {
+  const popups = document.querySelectorAll('[id^="transcript-summary-popup"]');
+  popups.forEach((popup) => {
+    popup.remove();
+  });
+  const styles = document.querySelectorAll("style[data-popup-style]");
+  styles.forEach((style) => {
+    style.remove();
+  });
+}
 async function createPopup(message) {
-  // Remove existing popup if present
-  const existingPopup = document.getElementById("transcript-summary-popup");
-  if (existingPopup) {
-    existingPopup.remove();
-  }
+  cleanupAllPopups();
 
   try {
     const settings = await getSettings();
@@ -438,6 +473,7 @@ async function createPopup(message) {
 
     // Add CSS for markdown styling
     const style = document.createElement("style");
+    style.setAttribute("data-popup-style", "true");
     style.textContent = `
         #transcript-summary-popup h1 {
           font-size: ${headerSizes.h1}px;
@@ -522,8 +558,14 @@ async function createPopup(message) {
         font-size: ${settings.fontSize}px;
       `;
     closeButton.onclick = () => {
-      popup.remove();
-      style.remove();
+      // Mark all active processes as cancelled
+      for (const [processId, cancelled] of activeProcesses.entries()) {
+        if (!cancelled) {
+          activeProcesses.set(processId, true);
+        }
+      }
+
+      cleanupAllPopups();
       window.removeEventListener("resize", updatePopupWidth);
     };
 
@@ -542,6 +584,7 @@ async function createPopup(message) {
     window.addEventListener("resize", updatePopupWidth);
   } catch (error) {
     console.error("Error creating popup:", error);
+    cleanupAllPopups();
     const errorPopup = document.createElement("div");
     errorPopup.id = "transcript-summary-popup";
     errorPopup.style.cssText = `
@@ -630,29 +673,45 @@ function parseMarkdown(text) {
       const listType = isOrdered ? "ol" : "ul";
 
       // If we're starting a new list
-      if (!inList || (lastLineWasList && currentIndentLevel === 1 && listStack.length === 0)) {
+      if (
+        !inList ||
+        (lastLineWasList && currentIndentLevel === 1 && listStack.length === 0)
+      ) {
         html += closeListsToLevel(0);
         inList = true;
         lastIndentLevel = 1;
-        html += `<${listType} style="list-style-type: ${isOrdered ? 'decimal' : 'disc'}">\n`;
+        html += `<${listType} style="list-style-type: ${
+          isOrdered ? "decimal" : "disc"
+        }">\n`;
         listStack.push(listType);
         html += "  <li>" + processInlineFormatting(escapeHtml(content.trim()));
       } else if (currentIndentLevel > lastIndentLevel) {
         // Starting a nested list
         const indent = "  ".repeat(Math.max(0, lastIndentLevel));
         html = html.trimEnd();
-        html += "\n" + indent + `<${listType} style="list-style-type: ${isOrdered ? 'decimal' : 'disc'}">\n` + "  ".repeat(currentIndentLevel);
+        html +=
+          "\n" +
+          indent +
+          `<${listType} style="list-style-type: ${
+            isOrdered ? "decimal" : "disc"
+          }">\n` +
+          "  ".repeat(currentIndentLevel);
         listStack.push(listType);
         html += "<li>" + processInlineFormatting(escapeHtml(content.trim()));
       } else if (currentIndentLevel < lastIndentLevel) {
         // Moving back to a less nested level
         html += closeListsToLevel(currentIndentLevel);
         const indent = "  ".repeat(Math.max(0, currentIndentLevel));
-        html += indent + "<li>" + processInlineFormatting(escapeHtml(content.trim()));
+        html +=
+          indent + "<li>" + processInlineFormatting(escapeHtml(content.trim()));
       } else {
         // Same level, new list item
         const indent = "  ".repeat(Math.max(0, currentIndentLevel));
-        html += "</li>\n" + indent + "<li>" + processInlineFormatting(escapeHtml(content.trim()));
+        html +=
+          "</li>\n" +
+          indent +
+          "<li>" +
+          processInlineFormatting(escapeHtml(content.trim()));
       }
       lastIndentLevel = currentIndentLevel;
       lastLineWasList = true;
@@ -693,15 +752,27 @@ function parseMarkdown(text) {
 browser.runtime.onMessage.addListener(async (message) => {
   if (message.action === "START_SUMMARY") {
     try {
+      const processId = processCounter++;
+      activeProcesses.set(processId, false); // false means not cancelled
+
       createPopup("Retrieving transcript...");
-      const transcript = await getVideoTranscript();
-      createPopup("Getting summary...");
-      await sendToOpenAI(transcript);
+      const transcript = await getVideoTranscript(processId);
+      if (!activeProcesses.get(processId)) {
+        createPopup("Getting summary...");
+        await sendToOpenAI(transcript, processId);
+      }
     } catch (error) {
-      console.error("Error:", error);
-      createPopup(`Error: ${error.message}`);
+      if (error.message !== "Operation cancelled") {
+        console.error("Error:", error);
+        createPopup(`Error: ${error.message}`);
+      }
     }
   } else if (message.action === "UPDATE_POPUP") {
-    createPopup(message.message);
+    const hasActiveProcess = Array.from(activeProcesses.values()).some(
+      (cancelled) => !cancelled
+    );
+    if (hasActiveProcess) {
+      createPopup(message.message);
+    }
   }
 });
