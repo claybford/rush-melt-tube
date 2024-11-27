@@ -270,7 +270,7 @@ async function combineParallelSummaries(summaries, settings) {
         {
           role: "system",
           content:
-            "You are combining independently summarized sections of a video transcript. Focus on clearly identifying the topics and information given to create a cohesive final summary that eliminates redundancy. Use clear section labels and structured formatting, maintaining consistent formatting and structure. Always number lists.",
+            "You are combining independently summarized sections of a video transcript. Focus on clearly identifying the topics and information given to create a cohesive final summary that eliminates redundancy. Use clear section labels and structured formatting, maintaining consistent formatting and structure.",
         },
         {
           role: "user",
