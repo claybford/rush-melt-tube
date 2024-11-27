@@ -12,6 +12,7 @@
     "http://localhost/*",
     "http://127.0.0.1/*",
     "https://api.groq.com/*",
+    "https://integrate.api.nvidia.com/*",
     "https://www.youtube.com/*"
   ],
   "background": {
