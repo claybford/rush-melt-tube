@@ -270,7 +270,7 @@ async function combineParallelSummaries(summaries, settings) {
         {
           role: "system",
           content:
-            "You are combining independently summarized sections of a video transcript. Focus on clearly identifying the topics and information given to create a cohesive final summary that eliminates redundancy. Use clear section labels and structured formatting, maintaining consistent formatting and structure.",
+            "You are combining independently summarized sections of a video transcript. Focus on clearly identifying the topics and information given to create a cohesive final summary that eliminates redundancy. Use clear section labels and structured formatting, maintaining consistent formatting and structure. Always number lists.",
         },
         {
           role: "user",
@@ -562,7 +562,6 @@ async function createPopup(message) {
 }
 
 function parseMarkdown(text) {
-  // Helper function to escape HTML special characters
   const escapeHtml = (str) => {
     const entityMap = {
       "&": "&amp;",
@@ -574,34 +573,28 @@ function parseMarkdown(text) {
     return str.replace(/[&<>"']/g, (s) => entityMap[s]);
   };
 
-  // Process inline formatting first
   function processInlineFormatting(text) {
-    // Process bold
     text = text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
     text = text.replace(/__(.+?)__/g, "<strong>$1</strong>");
-
-    // Process italic
     text = text.replace(/\*(.+?)\*/g, "<em>$1</em>");
     text = text.replace(/_(.+?)_/g, "<em>$1</em>");
-
     return text;
   }
 
-  // Process the text line by line
   const lines = text.split("\n");
   let html = "";
   let listStack = []; // Stack to keep track of list levels and types
   let lastIndentLevel = 0;
+  let inList = false; // Track if we're in a list context
+  let lastLineWasList = false; // Track if the previous line was a list item
 
   function getListIndentLevel(spaces) {
-    // Add 1 to shift all levels right by one tab
     return Math.floor(spaces.length / 2) + 1;
   }
 
   function closeListsToLevel(targetLevel) {
     let closingTags = "";
     while (listStack.length > targetLevel) {
-      // Adjust indentation for closing tags
       closingTags +=
         "</li>\n" +
         "  ".repeat(Math.max(0, listStack.length)) +
@@ -614,16 +607,17 @@ function parseMarkdown(text) {
 
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
-
     // Headers
     const headerMatch = line.match(/^(#{1,6})\s+(.+)$/);
     if (headerMatch) {
       html += closeListsToLevel(0);
+      inList = false;
       const level = headerMatch[1].length;
       const content = processInlineFormatting(
         escapeHtml(headerMatch[2].trim())
       );
       html += `<h${level}>${content}</h${level}>\n`;
+      lastLineWasList = false;
       continue;
     }
 
@@ -635,39 +629,41 @@ function parseMarkdown(text) {
       const isOrdered = /^\d+\./.test(marker);
       const listType = isOrdered ? "ol" : "ul";
 
-      // Handle indentation changes
-      if (currentIndentLevel > lastIndentLevel) {
-        // Starting a new nested list
+      // If we're starting a new list
+      if (!inList || (lastLineWasList && currentIndentLevel === 1 && listStack.length === 0)) {
+        html += closeListsToLevel(0);
+        inList = true;
+        lastIndentLevel = 1;
+        html += `<${listType} style="list-style-type: ${isOrdered ? 'decimal' : 'disc'}">\n`;
+        listStack.push(listType);
+        html += "  <li>" + processInlineFormatting(escapeHtml(content.trim()));
+      } else if (currentIndentLevel > lastIndentLevel) {
+        // Starting a nested list
         const indent = "  ".repeat(Math.max(0, lastIndentLevel));
         html = html.trimEnd();
-        html +=
-          "\n" + indent + `<${listType}>\n` + "  ".repeat(currentIndentLevel);
+        html += "\n" + indent + `<${listType} style="list-style-type: ${isOrdered ? 'decimal' : 'disc'}">\n` + "  ".repeat(currentIndentLevel);
         listStack.push(listType);
         html += "<li>" + processInlineFormatting(escapeHtml(content.trim()));
       } else if (currentIndentLevel < lastIndentLevel) {
         // Moving back to a less nested level
         html += closeListsToLevel(currentIndentLevel);
         const indent = "  ".repeat(Math.max(0, currentIndentLevel));
-        html +=
-          indent + "<li>" + processInlineFormatting(escapeHtml(content.trim()));
+        html += indent + "<li>" + processInlineFormatting(escapeHtml(content.trim()));
       } else {
         // Same level, new list item
         const indent = "  ".repeat(Math.max(0, currentIndentLevel));
-        html +=
-          "</li>\n" +
-          indent +
-          "<li>" +
-          processInlineFormatting(escapeHtml(content.trim()));
+        html += "</li>\n" + indent + "<li>" + processInlineFormatting(escapeHtml(content.trim()));
       }
-
       lastIndentLevel = currentIndentLevel;
+      lastLineWasList = true;
       continue;
     }
 
-    // Empty line
+    // Empty line - don't close the list if it's just a blank line between list items
     if (line.trim() === "") {
-      if (listStack.length > 0) {
+      if (!lastLineWasList) {
         html += closeListsToLevel(0);
+        inList = false;
         lastIndentLevel = 0;
       }
       continue;
@@ -675,15 +671,21 @@ function parseMarkdown(text) {
 
     // Regular paragraph
     if (line.trim() !== "") {
-      html += closeListsToLevel(0);
-      lastIndentLevel = 0;
-      html += `<p>${processInlineFormatting(escapeHtml(line.trim()))}</p>\n`;
+      if (!lastLineWasList) {
+        html += closeListsToLevel(0);
+        inList = false;
+        lastIndentLevel = 0;
+        html += `<p>${processInlineFormatting(escapeHtml(line.trim()))}</p>\n`;
+      } else {
+        // This is content belonging to the last list item
+        html += " " + processInlineFormatting(escapeHtml(line.trim()));
+      }
     }
+    lastLineWasList = false;
   }
 
   // Close any remaining open lists
   html += closeListsToLevel(0);
-
   return html;
 }
 
