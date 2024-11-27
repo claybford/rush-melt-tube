@@ -7,6 +7,7 @@ async function getSettings() {
     apiKey: "",
     model: "gpt-4o",
     chunkSize: 1000,
+    concurrentRequestLimit: 10,
     font: "Arial",
     fontSize: 14,
     textColor: "#e6db74",
@@ -248,10 +249,9 @@ async function sendToAI(text, processId) {
 
     if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
 
-    const concurrencyLimit = 10;
     const summaryResults = await runWithConcurrencyLimit(
       chunkTasks,
-      concurrencyLimit
+      settings.concurrentRequestLimit
     );
 
     if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
