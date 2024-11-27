@@ -117,54 +117,69 @@ async function getVideoTranscript(processId) {
   }
 }
 
-async function sendToOpenAI(text, processId) {
+async function sendToAI(text, processId) {
   if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
 
   try {
     const settings = await getSettings();
+    const isAnthropicAPI = settings.apiUrl.includes("api.anthropic.com");
 
-    // Notify that we're starting the OpenAI request
     await browser.runtime.sendMessage({
       type: "GETTING_SUMMARY",
     });
 
-    // Split text into chunks
     const chunks = chunkText(text, settings.chunkSize);
     console.log(`Split transcript into ${chunks.length} chunks`);
 
-    // Create initial progress visualization
     const progressBoxes = new Array(chunks.length).fill("▯");
     await browser.runtime.sendMessage({
       type: "GETTING_SUMMARY",
       detail: `Getting chunk summaries: ${progressBoxes.join("|")}`,
     });
 
-    // Create prompts for each chunk upfront
     const chunkTasks = chunks.map((chunk, index) => {
       const isFirst = index === 0;
       const chunkNumber = index + 1;
 
-      // Customize prompt based on chunk position
       const prompt = isFirst
         ? `Please summarize this video transcript section (${chunkNumber}/${chunks.length}). This section may contain the video introduction. Focus on main points and keep the style structured in bullets, lists, etc as much as is logical, labeling any key sections you identify. Ignore sponsorships, include important details and steps of processes. Here is the section to summarize:\n\n${chunk}`
         : `Please summarize this independent section (${chunkNumber}/${chunks.length}) of a video transcript. This may be from any point in the video. Focus on main points and keep the style structured in bullets, lists, etc as much as is logical, labeling any key sections you identify. Ignore sponsorships, include important details and steps of processes. Here is the section to summarize:\n\n${chunk}`;
+
+      const systemMessage = `You are summarizing part ${chunkNumber} of ${chunks.length} from a video transcript. Each part is being processed independently. Focus on clearly identifying the topics and information in your assigned section without making assumptions about other sections. Use clear section labels and structured formatting.`;
 
       return async () => {
         if (activeProcesses.get(processId))
           throw new Error("Operation cancelled");
         try {
-          const response = await fetch(settings.apiUrl, {
-            method: "POST",
-            headers: {
+          let requestBody;
+          let headers;
+
+          if (isAnthropicAPI) {
+            // Anthropic API format
+            requestBody = {
+              model: settings.model,
+              messages: [
+                {
+                  role: "user",
+                  content: `${systemMessage}\n\n${prompt}`,
+                },
+              ],
+              max_tokens: 1000,
+            };
+
+            headers = {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${settings.apiKey}`,
-            },
-            body: JSON.stringify({
+              "x-api-key": settings.apiKey,
+              "anthropic-version": "2023-06-01",
+            };
+          } else {
+            // OpenAI API format
+            requestBody = {
               model: settings.model,
               messages: [
                 {
                   role: "system",
-                  content: `You are summarizing part ${chunkNumber} of ${chunks.length} from a video transcript. Each part is being processed independently. Focus on clearly identifying the topics and information in your assigned section without making assumptions about other sections. Use clear section labels and structured formatting.`,
+                  content: systemMessage,
                 },
                 {
                   role: "user",
@@ -172,7 +187,18 @@ async function sendToOpenAI(text, processId) {
                 },
               ],
               max_tokens: 1000,
-            }),
+            };
+
+            headers = {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${settings.apiKey}`,
+            };
+          }
+
+          const response = await fetch(settings.apiUrl, {
+            method: "POST",
+            headers: headers,
+            body: JSON.stringify(requestBody),
           });
 
           if (!response.ok) {
@@ -184,11 +210,20 @@ async function sendToOpenAI(text, processId) {
           }
 
           const data = await response.json();
-          if (!data.choices?.[0]?.message) {
-            throw new Error(`Invalid API response for chunk ${chunkNumber}`);
+          let summaryContent;
+
+          if (isAnthropicAPI) {
+            if (!data.content?.[0]?.text) {
+              throw new Error(`Invalid API response for chunk ${chunkNumber}`);
+            }
+            summaryContent = data.content[0].text;
+          } else {
+            if (!data.choices?.[0]?.message?.content) {
+              throw new Error(`Invalid API response for chunk ${chunkNumber}`);
+            }
+            summaryContent = data.choices[0].message.content;
           }
 
-          // Update progress visualization
           progressBoxes[index] = "▮";
           await browser.runtime.sendMessage({
             type: "GETTING_SUMMARY",
@@ -197,48 +232,46 @@ async function sendToOpenAI(text, processId) {
 
           return {
             index,
-            summary: data.choices[0].message.content,
+            summary: summaryContent,
           };
         } catch (error) {
-          // Mark failed chunks with X
           progressBoxes[index] = "✕";
           await browser.runtime.sendMessage({
             type: "GETTING_SUMMARY",
             detail: `Getting chunk summaries: ${progressBoxes.join("|")}`,
           });
           console.error(`Error processing chunk ${chunkNumber}:`, error);
-          throw error; // Re-throw to be caught by Promise.all
+          throw error;
         }
       };
     });
+
     if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
-    // Process chunks in parallel with concurrency limit
-    const concurrencyLimit = 10; // Adjust based on API rate limits
+
+    const concurrencyLimit = 10;
     const summaryResults = await runWithConcurrencyLimit(
       chunkTasks,
       concurrencyLimit
     );
+
     if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
 
-    // Sort results by original index and extract summaries
     const orderedSummaries = summaryResults
       .sort((a, b) => a.index - b.index)
       .map((result) => result.summary);
 
-    // Update status for final combination step
     await browser.runtime.sendMessage({
       type: "GETTING_SUMMARY",
       detail: "Getting complete summary...",
     });
+
     if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
 
-    // Combine summaries with a second API call for coherence
     const combinedSummary = await combineParallelSummaries(
       orderedSummaries,
       settings
     );
 
-    // Only send the summary if this process wasn't cancelled
     if (!activeProcesses.get(processId)) {
       await browser.runtime.sendMessage({
         type: "SUMMARY_COMPLETE",
@@ -282,41 +315,89 @@ async function runWithConcurrencyLimit(tasks, limit) {
   return Promise.all(results);
 }
 
-// Helper function to combine parallel summaries
 async function combineParallelSummaries(summaries, settings) {
+  const isAnthropicAPI = settings.apiUrl.includes("api.anthropic.com");
+
   const combinedText = summaries
     .map((summary, index) => `Part ${index + 1}:\n${summary}`)
     .join("\n\n");
 
-  const response = await fetch(settings.apiUrl, {
-    method: "POST",
-    headers: {
+  const systemMessage =
+    "You are combining independently summarized sections of a video transcript. Focus on clearly identifying the topics and information given to create a cohesive final summary that eliminates redundancy. Use clear section labels and structured formatting, maintaining consistent formatting and structure.";
+
+  const userMessage = `Please combine these independent video transcript summary sections into a single, cohesive summary. Eliminate redundancies, keep the style structured in bullets, lists, etc as much as is logical, and ensure good logical cohesion that can be followed. Include important details and steps of processes. Here is the text of the independent summary sections to combine:\n\n${combinedText}`;
+
+  let requestBody;
+  let headers;
+
+  if (isAnthropicAPI) {
+    // Anthropic API format
+    requestBody = {
+      model: settings.model,
+      messages: [
+        {
+          role: "user",
+          content: `${systemMessage}\n\n${userMessage}`,
+        },
+      ],
+      max_tokens: 2000,
+    };
+
+    headers = {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${settings.apiKey}`,
-    },
-    body: JSON.stringify({
+      "x-api-key": settings.apiKey,
+      "anthropic-version": "2023-06-01",
+    };
+  } else {
+    // OpenAI API format
+    requestBody = {
       model: settings.model,
       messages: [
         {
           role: "system",
-          content:
-            "You are combining independently summarized sections of a video transcript. Focus on clearly identifying the topics and information given to create a cohesive final summary that eliminates redundancy. Use clear section labels and structured formatting, maintaining consistent formatting and structure.",
+          content: systemMessage,
         },
         {
           role: "user",
-          content: `Please combine these independent video transcript summary sections into a single, cohesive summary. Eliminate redundancies, keep the style structured in bullets, lists, etc as much as is logical, and ensure good logical cohesion that can be followed. Include important details and steps of processes. Here is the text of the independent summary sections to combine:\n\n${combinedText}`,
+          content: userMessage,
         },
       ],
       max_tokens: 2000,
-    }),
+    };
+
+    headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${settings.apiKey}`,
+    };
+  }
+
+  const response = await fetch(settings.apiUrl, {
+    method: "POST",
+    headers: headers,
+    body: JSON.stringify(requestBody),
   });
 
   if (!response.ok) {
-    throw new Error(`API error in combining summaries: ${response.status}`);
+    throw new Error(
+      `API error in combining summaries: ${
+        response.status
+      } - ${await response.text()}`
+    );
   }
 
   const data = await response.json();
-  return data.choices[0].message.content;
+
+  if (isAnthropicAPI) {
+    if (!data.content?.[0]?.text) {
+      throw new Error("Invalid API response when combining summaries");
+    }
+    return data.content[0].text;
+  } else {
+    if (!data.choices?.[0]?.message?.content) {
+      throw new Error("Invalid API response when combining summaries");
+    }
+    return data.choices[0].message.content;
+  }
 }
 
 // Splitting text into chunks based on token estimation
@@ -759,7 +840,7 @@ browser.runtime.onMessage.addListener(async (message) => {
       const transcript = await getVideoTranscript(processId);
       if (!activeProcesses.get(processId)) {
         createPopup("Getting summary...");
-        await sendToOpenAI(transcript, processId);
+        await sendToAI(transcript, processId);
       }
     } catch (error) {
       if (error.message !== "Operation cancelled") {
