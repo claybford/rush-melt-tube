@@ -1,9 +1,13 @@
+let processCounter = 0;
+const activeProcesses = new Map(); // Maps process IDs to their cancellation status
+
 async function getSettings() {
   const defaultSettings = {
     apiUrl: "https://api.openai.com/v1/chat/completions",
     apiKey: "",
     model: "gpt-4o",
     chunkSize: 1000,
+    concurrentRequestLimit: 10,
     font: "Arial",
     fontSize: 14,
     textColor: "#e6db74",
@@ -21,131 +25,162 @@ async function getSettings() {
   return settings;
 }
 
-async function getVideoTranscript() {
-  const getVideoId = () => {
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get("v");
-  };
+async function getVideoTranscript(processId) {
+  try {
+    const getVideoId = () => {
+      if (activeProcesses.get(processId))
+        throw new Error("Operation cancelled");
+      const urlParams = new URLSearchParams(window.location.search);
+      return urlParams.get("v");
+    };
 
-  const fetchCaptionTracks = async (videoId) => {
-    const response = await fetch(`https://www.youtube.com/watch?v=${videoId}`);
-    if (!response.ok) {
-      throw new Error("Failed to fetch video page.");
-    }
-    const pageSource = await response.text();
-    const captionsRegex = /"captions":({.*?})\s*,\s*"videoDetails"/s;
-    const captionsMatch = pageSource.match(captionsRegex);
-    if (!captionsMatch || captionsMatch.length < 2) {
-      throw new Error("No captions metadata found.");
-    }
-    const rawCaptionsJson = captionsMatch[1];
-    let captionsData;
-    try {
-      captionsData = JSON.parse(rawCaptionsJson);
-    } catch (parseError) {
-      throw new Error("Failed to parse captions metadata.");
-    }
-    return captionsData.playerCaptionsTracklistRenderer.captionTracks || [];
-  };
+    const fetchCaptionTracks = async (videoId) => {
+      if (activeProcesses.get(processId))
+        throw new Error("Operation cancelled");
+      const response = await fetch(
+        `https://www.youtube.com/watch?v=${videoId}`
+      );
+      if (!response.ok) {
+        throw new Error("Failed to fetch video page.");
+      }
+      const pageSource = await response.text();
+      const captionsRegex = /"captions":({.*?})\s*,\s*"videoDetails"/s;
+      const captionsMatch = pageSource.match(captionsRegex);
+      if (!captionsMatch || captionsMatch.length < 2) {
+        throw new Error("No captions metadata found.");
+      }
+      const rawCaptionsJson = captionsMatch[1];
+      let captionsData;
+      try {
+        captionsData = JSON.parse(rawCaptionsJson);
+      } catch (parseError) {
+        throw new Error("Failed to parse captions metadata.");
+      }
+      return captionsData.playerCaptionsTracklistRenderer.captionTracks || [];
+    };
 
-  const fetchTranscriptXML = async (baseUrl) => {
-    const response = await fetch(baseUrl);
-    if (!response.ok) {
-      throw new Error("Failed to fetch the transcript.");
-    }
-    const transcriptXml = await response.text();
-    if (!transcriptXml.trim()) {
-      throw new Error("No transcript available.");
-    }
-    return transcriptXml;
-  };
+    const fetchTranscriptXML = async (baseUrl) => {
+      if (activeProcesses.get(processId))
+        throw new Error("Operation cancelled");
+      const response = await fetch(baseUrl);
+      if (!response.ok) {
+        throw new Error("Failed to fetch the transcript.");
+      }
+      const transcriptXml = await response.text();
+      if (!transcriptXml.trim()) {
+        throw new Error("No transcript available.");
+      }
+      return transcriptXml;
+    };
 
-  const parseTranscriptXML = (xmlString) => {
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlString, "text/xml");
-    if (xmlDoc.querySelector("parsererror")) {
-      throw new Error("Error parsing transcript XML.");
+    const parseTranscriptXML = (xmlString) => {
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(xmlString, "text/xml");
+      if (xmlDoc.querySelector("parsererror")) {
+        throw new Error("Error parsing transcript XML.");
+      }
+      const texts = xmlDoc.getElementsByTagName("text");
+      let transcript = [];
+      for (let text of texts) {
+        transcript.push(text.textContent.trim());
+      }
+      return transcript.join(" ");
+    };
+
+    const videoId = getVideoId();
+    if (!videoId) {
+      throw new Error("No video ID found in the URL.");
     }
-    const texts = xmlDoc.getElementsByTagName("text");
-    let transcript = [];
-    for (let text of texts) {
-      transcript.push(text.textContent.trim());
+
+    const captionTracks = await fetchCaptionTracks(videoId);
+    if (captionTracks.length === 0) {
+      throw new Error("No caption tracks available.");
     }
-    return transcript.join(" ");
-  };
 
-  const videoId = getVideoId();
-  if (!videoId) {
-    throw new Error("No video ID found in the URL.");
-  }
-
-  const captionTracks = await fetchCaptionTracks(videoId);
-  if (captionTracks.length === 0) {
-    throw new Error("No caption tracks available.");
-  }
-
-  let selectedTrack = captionTracks.find(
-    (track) => track.languageCode === "en" && !track.kind
-  );
-  if (!selectedTrack) {
-    selectedTrack = captionTracks.find(
-      (track) => track.languageCode === "en" && track.kind === "asr"
+    let selectedTrack = captionTracks.find(
+      (track) => track.languageCode === "en" && !track.kind
     );
-  }
-  if (!selectedTrack) {
-    throw new Error(
-      "No suitable caption track found (manual or auto-generated)."
-    );
-  }
+    if (!selectedTrack) {
+      selectedTrack = captionTracks.find(
+        (track) => track.languageCode === "en" && track.kind === "asr"
+      );
+    }
+    if (!selectedTrack) {
+      throw new Error(
+        "No suitable caption track found (manual or auto-generated)."
+      );
+    }
 
-  const transcriptXml = await fetchTranscriptXML(selectedTrack.baseUrl);
-  return parseTranscriptXML(transcriptXml);
+    const transcriptXml = await fetchTranscriptXML(selectedTrack.baseUrl);
+    if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
+    return parseTranscriptXML(transcriptXml);
+  } finally {
+  }
 }
 
-async function sendToOpenAI(text) {
+async function sendToAI(text, processId) {
+  if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
+
   try {
     const settings = await getSettings();
+    const isAnthropicAPI = settings.apiUrl.includes("api.anthropic.com");
 
-    // Notify that we're starting the OpenAI request
     await browser.runtime.sendMessage({
       type: "GETTING_SUMMARY",
     });
 
-    // Split text into chunks
     const chunks = chunkText(text, settings.chunkSize);
     console.log(`Split transcript into ${chunks.length} chunks`);
 
-    // Create initial progress visualization
     const progressBoxes = new Array(chunks.length).fill("▯");
     await browser.runtime.sendMessage({
       type: "GETTING_SUMMARY",
       detail: `Getting chunk summaries: ${progressBoxes.join("|")}`,
     });
 
-    // Create prompts for each chunk upfront
     const chunkTasks = chunks.map((chunk, index) => {
       const isFirst = index === 0;
       const chunkNumber = index + 1;
 
-      // Customize prompt based on chunk position
       const prompt = isFirst
         ? `Please summarize this video transcript section (${chunkNumber}/${chunks.length}). This section may contain the video introduction. Focus on main points and keep the style structured in bullets, lists, etc as much as is logical, labeling any key sections you identify. Ignore sponsorships, include important details and steps of processes. Here is the section to summarize:\n\n${chunk}`
         : `Please summarize this independent section (${chunkNumber}/${chunks.length}) of a video transcript. This may be from any point in the video. Focus on main points and keep the style structured in bullets, lists, etc as much as is logical, labeling any key sections you identify. Ignore sponsorships, include important details and steps of processes. Here is the section to summarize:\n\n${chunk}`;
 
+      const systemMessage = `You are summarizing part ${chunkNumber} of ${chunks.length} from a video transcript. Each part is being processed independently. Focus on clearly identifying the topics and information in your assigned section without making assumptions about other sections. Use clear section labels and structured formatting.`;
+
       return async () => {
+        if (activeProcesses.get(processId))
+          throw new Error("Operation cancelled");
         try {
-          const response = await fetch(settings.apiUrl, {
-            method: "POST",
-            headers: {
+          let requestBody;
+          let headers;
+
+          if (isAnthropicAPI) {
+            // Anthropic API format
+            requestBody = {
+              model: settings.model,
+              messages: [
+                {
+                  role: "user",
+                  content: `${systemMessage}\n\n${prompt}`,
+                },
+              ],
+              max_tokens: 1000,
+            };
+
+            headers = {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${settings.apiKey}`,
-            },
-            body: JSON.stringify({
+              "x-api-key": settings.apiKey,
+              "anthropic-version": "2023-06-01",
+            };
+          } else {
+            // OpenAI API format
+            requestBody = {
               model: settings.model,
               messages: [
                 {
                   role: "system",
-                  content: `You are summarizing part ${chunkNumber} of ${chunks.length} from a video transcript. Each part is being processed independently. Focus on clearly identifying the topics and information in your assigned section without making assumptions about other sections. Use clear section labels and structured formatting.`,
+                  content: systemMessage,
                 },
                 {
                   role: "user",
@@ -153,7 +188,18 @@ async function sendToOpenAI(text) {
                 },
               ],
               max_tokens: 1000,
-            }),
+            };
+
+            headers = {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${settings.apiKey}`,
+            };
+          }
+
+          const response = await fetch(settings.apiUrl, {
+            method: "POST",
+            headers: headers,
+            body: JSON.stringify(requestBody),
           });
 
           if (!response.ok) {
@@ -165,11 +211,20 @@ async function sendToOpenAI(text) {
           }
 
           const data = await response.json();
-          if (!data.choices?.[0]?.message) {
-            throw new Error(`Invalid API response for chunk ${chunkNumber}`);
+          let summaryContent;
+
+          if (isAnthropicAPI) {
+            if (!data.content?.[0]?.text) {
+              throw new Error(`Invalid API response for chunk ${chunkNumber}`);
+            }
+            summaryContent = data.content[0].text;
+          } else {
+            if (!data.choices?.[0]?.message?.content) {
+              throw new Error(`Invalid API response for chunk ${chunkNumber}`);
+            }
+            summaryContent = data.choices[0].message.content;
           }
 
-          // Update progress visualization
           progressBoxes[index] = "▮";
           await browser.runtime.sendMessage({
             type: "GETTING_SUMMARY",
@@ -178,55 +233,63 @@ async function sendToOpenAI(text) {
 
           return {
             index,
-            summary: data.choices[0].message.content,
+            summary: summaryContent,
           };
         } catch (error) {
-          // Mark failed chunks with X
           progressBoxes[index] = "✕";
           await browser.runtime.sendMessage({
             type: "GETTING_SUMMARY",
             detail: `Getting chunk summaries: ${progressBoxes.join("|")}`,
           });
           console.error(`Error processing chunk ${chunkNumber}:`, error);
-          throw error; // Re-throw to be caught by Promise.all
+          throw error;
         }
       };
     });
 
-    // Process chunks in parallel with concurrency limit
-    const concurrencyLimit = 10; // Adjust based on API rate limits
+    if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
+
     const summaryResults = await runWithConcurrencyLimit(
       chunkTasks,
-      concurrencyLimit
+      settings.concurrentRequestLimit
     );
 
-    // Sort results by original index and extract summaries
+    if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
+
     const orderedSummaries = summaryResults
       .sort((a, b) => a.index - b.index)
       .map((result) => result.summary);
 
-    // Update status for final combination step
     await browser.runtime.sendMessage({
       type: "GETTING_SUMMARY",
       detail: "Getting complete summary...",
     });
 
-    // Combine summaries with a second API call for coherence
+    if (activeProcesses.get(processId)) throw new Error("Operation cancelled");
+
     const combinedSummary = await combineParallelSummaries(
       orderedSummaries,
       settings
     );
 
-    await browser.runtime.sendMessage({
-      type: "SUMMARY_COMPLETE",
-      summary: combinedSummary,
-    });
+    if (!activeProcesses.get(processId)) {
+      await browser.runtime.sendMessage({
+        type: "SUMMARY_COMPLETE",
+        summary: combinedSummary,
+      });
+    }
   } catch (error) {
-    console.error("OpenAI API error:", error);
-    await browser.runtime.sendMessage({
-      type: "SUMMARY_ERROR",
-      error: error.message,
-    });
+    if (error.message === "Operation cancelled") {
+      console.log("Processing cancelled by user");
+      return;
+    }
+    console.error("AI API error:", error);
+    if (!activeProcesses.get(processId)) {
+      await browser.runtime.sendMessage({
+        type: "SUMMARY_ERROR",
+        error: error.message,
+      });
+    }
   }
 }
 
@@ -252,47 +315,95 @@ async function runWithConcurrencyLimit(tasks, limit) {
   return Promise.all(results);
 }
 
-// Helper function to combine parallel summaries
 async function combineParallelSummaries(summaries, settings) {
+  const isAnthropicAPI = settings.apiUrl.includes("api.anthropic.com");
+
   const combinedText = summaries
     .map((summary, index) => `Part ${index + 1}:\n${summary}`)
     .join("\n\n");
 
-  const response = await fetch(settings.apiUrl, {
-    method: "POST",
-    headers: {
+  const systemMessage =
+    "You are combining independently summarized sections of a video transcript. Focus on clearly identifying the topics and information given to create a cohesive final summary that eliminates redundancy. Use clear section labels and structured formatting, maintaining consistent formatting and structure.";
+
+  const userMessage = `Please combine these independent video transcript summary sections into a single, cohesive summary. Eliminate redundancies, keep the style structured in bullets, lists, etc as much as is logical, and ensure good logical cohesion that can be followed. Include important details and steps of processes. Here is the text of the independent summary sections to combine:\n\n${combinedText}`;
+
+  let requestBody;
+  let headers;
+
+  if (isAnthropicAPI) {
+    // Anthropic API format
+    requestBody = {
+      model: settings.model,
+      messages: [
+        {
+          role: "user",
+          content: `${systemMessage}\n\n${userMessage}`,
+        },
+      ],
+      max_tokens: 2000,
+    };
+
+    headers = {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${settings.apiKey}`,
-    },
-    body: JSON.stringify({
+      "x-api-key": settings.apiKey,
+      "anthropic-version": "2023-06-01",
+    };
+  } else {
+    // OpenAI API format
+    requestBody = {
       model: settings.model,
       messages: [
         {
           role: "system",
-          content:
-            "You are combining independently summarized sections of a video transcript. Focus on clearly identifying the topics and information given to create a cohesive final summary that eliminates redundancy. Use clear section labels and structured formatting, maintaining consistent formatting and structure.",
+          content: systemMessage,
         },
         {
           role: "user",
-          content: `Please combine these independent video transcript summary sections into a single, cohesive summary. Eliminate redundancies, keep the style structured in bullets, lists, etc as much as is logical, and ensure good logical cohesion that can be followed. Include important details and steps of processes. Here is the text of the independent summary sections to combine:\n\n${combinedText}`,
+          content: userMessage,
         },
       ],
       max_tokens: 2000,
-    }),
+    };
+
+    headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${settings.apiKey}`,
+    };
+  }
+
+  const response = await fetch(settings.apiUrl, {
+    method: "POST",
+    headers: headers,
+    body: JSON.stringify(requestBody),
   });
 
   if (!response.ok) {
-    throw new Error(`API error in combining summaries: ${response.status}`);
+    throw new Error(
+      `API error in combining summaries: ${
+        response.status
+      } - ${await response.text()}`
+    );
   }
 
   const data = await response.json();
-  return data.choices[0].message.content;
+
+  if (isAnthropicAPI) {
+    if (!data.content?.[0]?.text) {
+      throw new Error("Invalid API response when combining summaries");
+    }
+    return data.content[0].text;
+  } else {
+    if (!data.choices?.[0]?.message?.content) {
+      throw new Error("Invalid API response when combining summaries");
+    }
+    return data.choices[0].message.content;
+  }
 }
 
 // Splitting text into chunks based on token estimation
 function chunkText(text, maxTokens) {
   if (!maxTokens) {
-    maxTokens = 4000; // Default if not provided
+    maxTokens = 1000; // Default if not provided
   }
   // Define an approximate token estimation function
   const estimateTokens = (str) => Math.ceil(str.length / 4); // Rough estimate: 1 token ≈ 4 characters
@@ -373,13 +484,18 @@ function convertHTMLStringToDOM(htmlString) {
 
   return result;
 }
-
+function cleanupAllPopups() {
+  const popups = document.querySelectorAll('[id^="transcript-summary-popup"]');
+  popups.forEach((popup) => {
+    popup.remove();
+  });
+  const styles = document.querySelectorAll("style[data-popup-style]");
+  styles.forEach((style) => {
+    style.remove();
+  });
+}
 async function createPopup(message) {
-  // Remove existing popup if present
-  const existingPopup = document.getElementById("transcript-summary-popup");
-  if (existingPopup) {
-    existingPopup.remove();
-  }
+  cleanupAllPopups();
 
   try {
     const settings = await getSettings();
@@ -438,6 +554,7 @@ async function createPopup(message) {
 
     // Add CSS for markdown styling
     const style = document.createElement("style");
+    style.setAttribute("data-popup-style", "true");
     style.textContent = `
         #transcript-summary-popup h1 {
           font-size: ${headerSizes.h1}px;
@@ -522,8 +639,14 @@ async function createPopup(message) {
         font-size: ${settings.fontSize}px;
       `;
     closeButton.onclick = () => {
-      popup.remove();
-      style.remove();
+      // Mark all active processes as cancelled
+      for (const [processId, cancelled] of activeProcesses.entries()) {
+        if (!cancelled) {
+          activeProcesses.set(processId, true);
+        }
+      }
+
+      cleanupAllPopups();
       window.removeEventListener("resize", updatePopupWidth);
     };
 
@@ -542,6 +665,7 @@ async function createPopup(message) {
     window.addEventListener("resize", updatePopupWidth);
   } catch (error) {
     console.error("Error creating popup:", error);
+    cleanupAllPopups();
     const errorPopup = document.createElement("div");
     errorPopup.id = "transcript-summary-popup";
     errorPopup.style.cssText = `
@@ -562,7 +686,6 @@ async function createPopup(message) {
 }
 
 function parseMarkdown(text) {
-  // Helper function to escape HTML special characters
   const escapeHtml = (str) => {
     const entityMap = {
       "&": "&amp;",
@@ -574,34 +697,28 @@ function parseMarkdown(text) {
     return str.replace(/[&<>"']/g, (s) => entityMap[s]);
   };
 
-  // Process inline formatting first
   function processInlineFormatting(text) {
-    // Process bold
     text = text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
     text = text.replace(/__(.+?)__/g, "<strong>$1</strong>");
-
-    // Process italic
     text = text.replace(/\*(.+?)\*/g, "<em>$1</em>");
     text = text.replace(/_(.+?)_/g, "<em>$1</em>");
-
     return text;
   }
 
-  // Process the text line by line
   const lines = text.split("\n");
   let html = "";
   let listStack = []; // Stack to keep track of list levels and types
   let lastIndentLevel = 0;
+  let inList = false; // Track if we're in a list context
+  let lastLineWasList = false; // Track if the previous line was a list item
 
   function getListIndentLevel(spaces) {
-    // Add 1 to shift all levels right by one tab
     return Math.floor(spaces.length / 2) + 1;
   }
 
   function closeListsToLevel(targetLevel) {
     let closingTags = "";
     while (listStack.length > targetLevel) {
-      // Adjust indentation for closing tags
       closingTags +=
         "</li>\n" +
         "  ".repeat(Math.max(0, listStack.length)) +
@@ -614,16 +731,17 @@ function parseMarkdown(text) {
 
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
-
     // Headers
     const headerMatch = line.match(/^(#{1,6})\s+(.+)$/);
     if (headerMatch) {
       html += closeListsToLevel(0);
+      inList = false;
       const level = headerMatch[1].length;
       const content = processInlineFormatting(
         escapeHtml(headerMatch[2].trim())
       );
       html += `<h${level}>${content}</h${level}>\n`;
+      lastLineWasList = false;
       continue;
     }
 
@@ -635,13 +753,30 @@ function parseMarkdown(text) {
       const isOrdered = /^\d+\./.test(marker);
       const listType = isOrdered ? "ol" : "ul";
 
-      // Handle indentation changes
-      if (currentIndentLevel > lastIndentLevel) {
-        // Starting a new nested list
+      // If we're starting a new list
+      if (
+        !inList ||
+        (lastLineWasList && currentIndentLevel === 1 && listStack.length === 0)
+      ) {
+        html += closeListsToLevel(0);
+        inList = true;
+        lastIndentLevel = 1;
+        html += `<${listType} style="list-style-type: ${
+          isOrdered ? "decimal" : "disc"
+        }">\n`;
+        listStack.push(listType);
+        html += "  <li>" + processInlineFormatting(escapeHtml(content.trim()));
+      } else if (currentIndentLevel > lastIndentLevel) {
+        // Starting a nested list
         const indent = "  ".repeat(Math.max(0, lastIndentLevel));
         html = html.trimEnd();
         html +=
-          "\n" + indent + `<${listType}>\n` + "  ".repeat(currentIndentLevel);
+          "\n" +
+          indent +
+          `<${listType} style="list-style-type: ${
+            isOrdered ? "decimal" : "disc"
+          }">\n` +
+          "  ".repeat(currentIndentLevel);
         listStack.push(listType);
         html += "<li>" + processInlineFormatting(escapeHtml(content.trim()));
       } else if (currentIndentLevel < lastIndentLevel) {
@@ -659,15 +794,16 @@ function parseMarkdown(text) {
           "<li>" +
           processInlineFormatting(escapeHtml(content.trim()));
       }
-
       lastIndentLevel = currentIndentLevel;
+      lastLineWasList = true;
       continue;
     }
 
-    // Empty line
+    // Empty line - don't close the list if it's just a blank line between list items
     if (line.trim() === "") {
-      if (listStack.length > 0) {
+      if (!lastLineWasList) {
         html += closeListsToLevel(0);
+        inList = false;
         lastIndentLevel = 0;
       }
       continue;
@@ -675,15 +811,21 @@ function parseMarkdown(text) {
 
     // Regular paragraph
     if (line.trim() !== "") {
-      html += closeListsToLevel(0);
-      lastIndentLevel = 0;
-      html += `<p>${processInlineFormatting(escapeHtml(line.trim()))}</p>\n`;
+      if (!lastLineWasList) {
+        html += closeListsToLevel(0);
+        inList = false;
+        lastIndentLevel = 0;
+        html += `<p>${processInlineFormatting(escapeHtml(line.trim()))}</p>\n`;
+      } else {
+        // This is content belonging to the last list item
+        html += " " + processInlineFormatting(escapeHtml(line.trim()));
+      }
     }
+    lastLineWasList = false;
   }
 
   // Close any remaining open lists
   html += closeListsToLevel(0);
-
   return html;
 }
 
@@ -691,15 +833,27 @@ function parseMarkdown(text) {
 browser.runtime.onMessage.addListener(async (message) => {
   if (message.action === "START_SUMMARY") {
     try {
+      const processId = processCounter++;
+      activeProcesses.set(processId, false); // false means not cancelled
+
       createPopup("Retrieving transcript...");
-      const transcript = await getVideoTranscript();
-      createPopup("Getting summary...");
-      await sendToOpenAI(transcript);
+      const transcript = await getVideoTranscript(processId);
+      if (!activeProcesses.get(processId)) {
+        createPopup("Getting summary...");
+        await sendToAI(transcript, processId);
+      }
     } catch (error) {
-      console.error("Error:", error);
-      createPopup(`Error: ${error.message}`);
+      if (error.message !== "Operation cancelled") {
+        console.error("Error:", error);
+        createPopup(`Error: ${error.message}`);
+      }
     }
   } else if (message.action === "UPDATE_POPUP") {
-    createPopup(message.message);
+    const hasActiveProcess = Array.from(activeProcesses.values()).some(
+      (cancelled) => !cancelled
+    );
+    if (hasActiveProcess) {
+      createPopup(message.message);
+    }
   }
 });

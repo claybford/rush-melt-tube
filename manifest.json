@@ -11,6 +11,10 @@
     "https://api.anthropic.com/*",
     "http://localhost/*",
     "http://127.0.0.1/*",
+    "https://api.groq.com/*",
+    "https://integrate.api.nvidia.com/*",
+    "https://generativelanguage.googleapis.com/v1beta/openai/*",
+    "https://*.aws.endpoints.huggingface.cloud/*",
     "https://www.youtube.com/*"
   ],
   "background": {
