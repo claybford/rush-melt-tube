@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Rush Melt Tube",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Rush Melt Tube summarizes YouTube videos by pulling the video transcript and processing it using the AI tool of your choice (permissions set in the manifest for local, OpenAI, and Anthropic).",
   "permissions": [
     "activeTab",
